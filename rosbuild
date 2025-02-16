@@ -1,0 +1,175 @@
+#!/bin/bash
+
+BUILD_CMD="colcon build"
+VERBOSE_ARGS="--event-handlers console_direct+ --cmake-args -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON"
+WARNING_ARGS="--cmake-args -Wno-dev -DCMAKE_CXX_FLAGS='-w -Wno-unused-variable -Wno-unused-parameter -Wno-error=unused-variable' -DCMAKE_C_FLAGS='-w -Wno-unused-variable -Wno-unused-parameter'"
+DEBUG_ARGS="--mixin debug"
+RELEASE_ARGS="--cmake-args -DCMAKE_BUILD_TYPE=Release"
+
+show_usage() {
+    echo -e "\nUsage: $0 [OPTIONS]"
+    echo -e "\nOptions:"
+    echo -e "\t -b, --build \t\t\t\t [Build entire workspace] (Default: Release mode)"
+    echo -e "\t -cb, --clean-build \t\t\t [Clean and build entire workspace] (Default: Release mode)"
+    echo -e "\t -bd, --build-debug \t\t\t [Build entire workspace in Debug mode]"
+    echo -e "\t -cbd, --clean-build-debug \t\t [Clean and build entire workspace in Debug mode]"
+    echo -e "\t -c, --clean \t\t\t\t [Clean the workspace]"
+    echo -e "\t -s, --symlink \t\t\t\t [Use symlinks for install]"
+    echo -e "\t -v, --verbose \t\t\t\t [Enable verbose output]"
+    echo -e "\t -nw, --no-warning \t\t\t [Disable warnings]"
+    echo -e "\t -h, --help \t\t\t\t [Show this help message]"
+    echo -e "\nExamples:"
+    echo -e "\t $0 -b \t\t\t [Build entire workspace] (Default: Release mode)"
+    echo -e "\t $0 -b [package] \t\t [Build specific package] (Default: Release mode)"
+    echo -e "\t $0 -bd \t\t\t [Build entire workspace in Debug mode]"
+    echo -e "\t $0 -bd [package] \t\t [Build specific package in Debug mode]"
+    echo -e "\t $0 -cb \t\t\t [Clean and rebuild entire workspace] (Default: Release mode)"
+    echo -e "\t $0 -cbd \t\t\t [Clean and rebuild entire workspace in Debug mode]"
+    echo -e "\t $0 -c \t\t\t [Clean the workspace]"
+    echo -e "\t $0 -b -s \t\t\t [Build with symlinks]"
+    echo -e "\t $0 -b -v \t\t\t [Build with verbose output]"
+    echo -e "\t $0 -b -nw \t\t\t [Build without warnings]"
+    echo -e "\t $0 -b [package] -s -v -nw \t [Build specific package with symlinks, verbose, no warnings]"
+    exit "$1"
+}
+
+handle_error() {
+    echo -e "\nError: $1\n"
+    exit 1
+}
+
+check_package_exists() {
+    local package="$1"
+    [ -z "$package" ] && return
+    [ -d "$package" ] || [ -d "src/$package" ] || handle_error "Package '$package' not found in current or src directory."
+}
+
+clean_workspace() {
+    echo -e "\nCleaning the workspace...\n"
+    echo -e "Removing build, install, and log directories...\n"    
+    rm -rf build install log
+    if [ $? -ne 0 ]; then
+        handle_error "Failed to remove 'build', 'install', or 'log' directories from the root directory."
+    fi
+    echo -e "Removing temporary files with specific extensions...\n"
+    find . -maxdepth 1 \( -name "*.pdf" -o -name "*.gv" -o -name "*.out" \) -delete
+    echo -e "\nWorkspace has been successfully cleaned.\n"
+}
+
+build_workspace() {
+    local package="$1"
+    local args="$2"
+    check_package_exists "$package"
+    echo -e "\nBuilding the workspace...\n"
+    if [ -n "$package" ]; then
+        echo -e "Building specific package: $package\n"
+        $BUILD_CMD --packages-select "$package" $args
+    else
+        echo -e "Building entire workspace\n"
+        $BUILD_CMD $args
+    fi
+    if [ $? -ne 0 ]; then
+        handle_error "Failed to build the workspace."
+    fi
+    echo -e "\nWorkspace build completed successfully.\n"
+}
+
+exec() {
+    local action=""
+    local args=""
+    local package=""
+    local debug_mode=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                show_usage 0
+                ;;
+            -b|--build)
+                action="build"
+                shift
+                if [[ $1 != -* ]] && [ -n "$1" ]; then
+                    package="$1"
+                    shift
+                fi
+                ;;
+            -cb|--clean-build)
+                action="clean-build"
+                shift
+                if [[ $1 != -* ]] && [ -n "$1" ]; then
+                    package="$1"
+                    shift
+                fi
+                ;;
+            -bd|--build-debug)
+                action="build"
+                debug_mode=true
+                shift
+                if [[ $1 != -* ]] && [ -n "$1" ]; then
+                    package="$1"
+                    shift
+                fi
+                ;;
+            -cbd|--clean-build-debug)
+                action="clean-build"
+                debug_mode=true
+                shift
+                if [[ $1 != -* ]] && [ -n "$1" ]; then
+                    package="$1"
+                    shift
+                fi
+                ;;
+            -c|--clean)
+                action="clean"
+                shift
+                ;;
+            -s|--symlink)
+                args+=" --symlink-install"
+                shift
+                ;;
+            -v|--verbose)
+                args+=" $VERBOSE_ARGS"
+                shift
+                ;;
+            -nw|--no-warning)
+                args+=" $WARNING_ARGS"
+                shift
+                ;;
+            *)
+                if [ -z "$package" ] && [[ $1 != -* ]]; then
+                    package="$1"
+                    shift
+                else
+                    echo "Unknown option: $1"
+                    show_usage 1
+                fi
+                ;;
+        esac
+    done
+    if [ "$debug_mode" = true ]; then
+        args+=" $DEBUG_ARGS"
+    else
+        args+=" $RELEASE_ARGS"
+    fi
+    if [ -z "$action" ]; then
+        echo -e "Error: No action specified (-b, -cb, -bd, -cbd, or -c required)"
+        show_usage 1
+    fi
+    case "$action" in
+        "build")
+            build_workspace "$package" "$args"
+            ;;
+        "clean-build")
+            clean_workspace
+            build_workspace "$package" "$args"
+            ;;
+        "clean")
+            clean_workspace
+            ;;
+        *)
+            handle_error "Invalid action: $action"
+            ;;
+    esac
+}
+
+exec "$@"
